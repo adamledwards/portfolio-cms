@@ -7,6 +7,7 @@ const {
   GraphQLSchema,
   GraphQLID,
   GraphQLBoolean,
+  GraphQLEnumType,
  } = require('graphql');
 
 const {
@@ -21,19 +22,20 @@ const {
   cursorForObjectInConnection,
   offsetToCursor
 } = require('graphql-relay');
+
 const GraphQLJSON  = require('graphql-type-json');
 const md5 = require('md5');
 const path = require('path');
 const fs = require('fs-extra');
 const SETTINGS = require('./config/settings.js');
 const { DB, models } = require('./database');
-const { saveFile } = require('./fileManger.js');
-
+const { saveFile, deleteFile } = require('./fileManger.js');
+const Op = DB.Sequelize.Op
 
 function getDataType (type) {
   return {
     page: PageType,
-    block: blockType
+    block: BlockType
   }[type];
 }
 
@@ -49,7 +51,7 @@ var {nodeInterface, nodeField} = nodeDefinitions(
   }
 );
 
-const metaType = new GraphQLObjectType({
+const MetaType = new GraphQLObjectType({
   name: 'Meta',
   description: 'Meta fiels',  
   interfaces: [nodeInterface],
@@ -81,7 +83,7 @@ const metaType = new GraphQLObjectType({
   },
 });
 
-const metaTypeCreateInput = new GraphQLInputObjectType({
+const MetaTypeCreateInput = new GraphQLInputObjectType({
   name: 'MetaTypeCreateInput',
   description: 'Meta',
   fields: { 
@@ -106,12 +108,12 @@ const metaTypeCreateInput = new GraphQLInputObjectType({
 });
 
 const { connectionType: metaConnection, edgeType: metaEdge } = 
-connectionDefinitions({ name: 'Meta', nodeType: metaType });
+connectionDefinitions({ name: 'Meta', nodeType: MetaType });
 
 const createMeta =  mutationWithClientMutationId({
   name: 'createMeta',
   inputFields: {
-    metaInput: { type: metaTypeCreateInput },
+    metaInput: { type: MetaTypeCreateInput },
   },
   mutateAndGetPayload({ metaInput }) {
     const {type, id} = fromGlobalId(metaInput.blockId);
@@ -152,7 +154,7 @@ const createMeta =  mutationWithClientMutationId({
   }
 });
 
-const metaTypeUpdateInput = new GraphQLInputObjectType({
+const MetaTypeUpdateInput = new GraphQLInputObjectType({
   name: 'MetaTypeUpdateInput',
   description: 'Meta update',
   fields: { 
@@ -179,7 +181,7 @@ const metaTypeUpdateInput = new GraphQLInputObjectType({
 const updateMeta =  mutationWithClientMutationId({
   name: 'updateMeta',
   inputFields: {
-    metaInput: { type: metaTypeUpdateInput },
+    metaInput: { type: MetaTypeUpdateInput },
   },
   mutateAndGetPayload({ metaInput }) {
     const {type, id} = fromGlobalId(metaInput.id);
@@ -225,7 +227,7 @@ const updateMeta =  mutationWithClientMutationId({
   },
   outputFields: {
     updateMeta: {
-      type: metaType,
+      type: MetaType,
       resolve: (payload) => payload
     },
     metaConnection: {
@@ -266,7 +268,7 @@ const removeMeta = mutationWithClientMutationId({
       resolve: (payload) => payload.deletedId
     },
     meta: {
-      type: metaType,
+      type: MetaType,
       description: 'deleted meta item',
       resolve: payload => payload.meta
     }
@@ -350,20 +352,23 @@ const uploadBlockFile = mutationWithClientMutationId({
     }}).then(results => {
       deletedIds = results.map((row) => {
         const path = row.absolutePath;
-        fs.unlink(path);
+        fs.unlink(path).catch(() => {
+          console.warn('No file to delete');
+        });
         return row.id;
       });
       return models.file.destroy(
         {
           where: { 
             id: {
-              [DB.Sequelize.Op.in]: deletedIds,
+              [Op.in]: deletedIds,
             }
           }
         }
       );
     }).then(() => {
-      return saveFile(context, SETTINGS.MEDAIA_ROOT);
+      const file = context.files['file'][0];
+      return saveFile(file, SETTINGS.MEDAIA_ROOT);
     }).then((fileObj) => {
       return models.file.create(Object.assign({}, fileObj, { blockId, scope }));
     }).then(fileInstance => ({
@@ -415,7 +420,7 @@ const uploadFile = mutationWithClientMutationId({
 });
 
 
-const blockType = new GraphQLObjectType({
+const BlockType = new GraphQLObjectType({
   name: 'Block',
   description: 'Page block',
   interface: [nodeInterface], 
@@ -494,9 +499,9 @@ const blockType = new GraphQLObjectType({
 const { 
   connectionType: blockConnection,
   edgeType: blockEdge 
-} = connectionDefinitions({ name: 'Blocks', nodeType: blockType });
+} = connectionDefinitions({ name: 'Blocks', nodeType: BlockType });
 
-const blockTypeInput = new GraphQLInputObjectType({
+const BlockTypeInput = new GraphQLInputObjectType({
   name: 'BlockInput',
   description: 'Page block',
   fields: { 
@@ -556,7 +561,7 @@ const blockUpdateTypeInput = new GraphQLInputObjectType({
 const createBlock =  mutationWithClientMutationId({
   name: 'createBlock',
   inputFields: {
-    blockInput: { type: blockTypeInput },
+    blockInput: { type: BlockTypeInput },
   },
   mutateAndGetPayload({ blockInput }) {
     const {type, id} = fromGlobalId(blockInput.pageId);
@@ -611,7 +616,7 @@ const updateBlock =  mutationWithClientMutationId({
   },
   outputFields: {
     block: {
-      type: blockType,
+      type: BlockType,
       resolve: (payload) => payload
     }
   }
@@ -712,9 +717,17 @@ const removeBlock =  mutationWithClientMutationId({
       resolve: (payload) => payload.deletedId 
     },
     block: {
-      type: blockType,
+      type: BlockType,
       resolve: (payload) => payload.block 
     }
+  }
+});
+
+var DirectionType = new GraphQLEnumType({
+  name: 'Direction',
+  values: {
+    FORWARD: { value: 1 },
+    BACKWARDS: { value: 0 },
   }
 });
 
@@ -771,7 +784,14 @@ const PageType = new GraphQLObjectType({
         type: FileType,
         description: 'Listing image file',
         resolve (page) {
-          return page.listingImage;
+          return page.getListingImage();
+        },
+      },
+      listingImageSmall: {
+        type: FileType,
+        description: 'Listing image file Small',
+        resolve (page) {
+          return page.getListingImageSmall();
         },
       },
       blockConnection: {
@@ -781,13 +801,41 @@ const PageType = new GraphQLObjectType({
         resolve (page, args) {
           return page.getBlocks(
             {
-              order: [ ['position', 'ASC'] ]
+              order: [ ['position', 'ASC'] ],
             }
           ).then((blocks) => {
             return connectionFromArray(blocks,args);
           });
         },
       },
+      nextPage: {
+        type: PageType,
+        args: {
+          direction: {
+            type: DirectionType,
+            description: 'use FOWARDS or BACKWARDS to get next or previous page'
+          }
+        },
+        description: 'Get next or previous page',
+        resolve(page, { direction }) {
+          return DB.models.page.findOne({
+            where: {
+              [Op.or]: [
+                {
+                  position: {
+                    [direction ? Op.gt : Op.lt]: page.position
+                  }
+                },
+                {
+                  createdAt: {
+                    [direction ? Op.gt : Op.lt]: page.createdAt
+                  }
+                }
+              ]
+            }
+          });
+        }
+      }
     };
   },
 });
@@ -795,9 +843,7 @@ const PageType = new GraphQLObjectType({
 const { connectionType: pageConnection, edgeType: pageEdge } = 
 connectionDefinitions({ name: 'Page', nodeType: PageType });
 
-const PageTypeInput  = new GraphQLInputObjectType({
-  name: 'PageInput',
-  description: 'input fields for page',
+const pageInputFields = {
   fields: {
     title: {
       type: GraphQLString,
@@ -818,13 +864,31 @@ const PageTypeInput  = new GraphQLInputObjectType({
     published: {
       type: GraphQLBoolean,
       description: 'Flag to indicate if the page should be made public',
-      defaultValue: false
     },
     position: {
       type: GraphQLInt,
     }
   }
-});
+};
+
+const PageUpdateTypeInput  = new GraphQLInputObjectType(
+  Object.assign({}, pageInputFields, {
+    name: 'PageInput',
+    description: 'input fields for page',
+  })
+);
+
+const PageTypeInput  = new GraphQLInputObjectType(
+  Object.assign({}, pageInputFields, {
+    name: 'PageUpdateInput',
+    description: 'input fields for page',
+    published: {
+      type: GraphQLBoolean,
+      description: 'Flag to indicate if the page should be made public',
+      defaultValue: false
+    }
+  })
+);
 
 const createPage =  mutationWithClientMutationId({
   name: 'CreatePage',
@@ -832,8 +896,9 @@ const createPage =  mutationWithClientMutationId({
     pageInput: { type: PageTypeInput },
   },
   mutateAndGetPayload({ pageInput }, context) {
-    if(context.file) {
-      return saveFile(context, SETTINGS.MEDAIA_ROOT)
+    const file = context.files['file'][0];
+    if(file) {
+      return saveFile(file, SETTINGS.MEDAIA_ROOT)
         .then((file) => {
           const input = Object.assign(
             pageInput,
@@ -862,19 +927,68 @@ const updatePage =  mutationWithClientMutationId({
   name: 'UpdatePage',
   inputFields: {
     id: { type: GraphQLID },
-    pageInput: { type: PageTypeInput },
+    pageInput: { type: PageUpdateTypeInput },
   },
-  mutateAndGetPayload({ id, pageInput  }) {
-    const {type, dbid} = fromGlobalId(id);
+  mutateAndGetPayload({ id, pageInput }, context) {
+    const {type, id: dbid} = fromGlobalId(id);
     if(type !== 'Page') {
       throw Error('id must be type page');
     }
-    return models.page.update(pageInput, { where:  {id: dbid } });
+    const files = context.files;
+    //TODO MAKE THIS AN INSTANCE METHOD
+    const query = () => models.page.findById(dbid,
+      {
+        include: [
+          DB.models.page.listingImage,
+          DB.models.page.listingImageSmall
+        ]
+      });
+    
+    const updater = () => (
+      models.page.update(pageInput, { where:  {id: dbid }})
+        .then(query)
+    );
+    
+    if(files) {
+      const filePromise = Object.keys(files).map((key) => {
+        return saveFile(files[key][0], SETTINGS.MEDAIA_ROOT)
+          .then((file) => {
+            let imageName = 'listingImage';
+            if (key == 'file1') {
+              imageName = 'listingImageSmall';
+            }
+            return models.file.create(file).then((fileInstance) => ({
+              file: fileInstance,
+              name: imageName,
+            }));
+          });
+      });
+      return Promise.all(filePromise).then((updatedFiles) => {
+        return query()
+          .then(page => [updatedFiles, page]);
+      }).then((result) => {
+        const [updatedFiles, page] = result;
+        return Promise.all(updatedFiles.map(({name, file}) => {
+          const method = `set${name.slice(0,1).toUpperCase()}${name.slice(1)}`;
+          if(page[name]) {
+            deleteFile(page[name].absolutePath).catch(() => {
+              console.warn('No file to delete');
+            });
+            return page[name].destroy().then(() => {
+              return page[method](file);
+            });
+          }
+          
+          return page[method](file);
+        }));
+      }).then(updater);
+    }
+    return updater();
   },
   outputFields: {
     page: {
       type: PageType,
-      resolve: (payload) => payload
+      resolve: (payload) => (payload)
     }
   }
 });
@@ -911,6 +1025,7 @@ const queryType = new GraphQLObjectType({
           return models.page.findAll({
             include: [ 
               DB.models.page.listingImage,
+              DB.models.page.listingImageSmall
             ]
           }).then((pages) => (
             connectionFromArray(pages, args)

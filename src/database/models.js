@@ -145,6 +145,13 @@ DB.models.page.listingImage = Page.belongsTo(File, {
   foreignKey: 'listing_image_id',
   constraints: false,
 });
+
+DB.models.page.listingImageSmall = Page.belongsTo(File, {
+  as: 'listingImageSmall', 
+  foreignKey: 'listing_image_small_id',
+  constraints: false,
+});
+
 Block.hasMany(Meta, { onDelete: 'CASCADE' });
 Block.hasMany(File);
 

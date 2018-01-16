@@ -9,11 +9,16 @@ var cors = require('cors');
 const SETTINGS = require('./config/settings.js');
 
 const app = express();
-
+uploads = 
 app.use(cors());
 app.use(SETTINGS.MEDAIA_PATH, express.static(SETTINGS.MEDAIA_ROOT));
-app.use(multer({dest: os.tmpdir()}).single('file'));
-app.use('/graphql', graphqlHTTP((request) => ({
+
+var uploads = multer({dest: os.tmpdir()}).fields([
+  { name: 'file', maxCount: 1 },
+  { name: 'file1', maxCount: 1 },
+  { name: 'file2', maxCount: 1 }
+]);
+app.use('/graphql', uploads, graphqlHTTP((request) => ({
   schema: schema,
   graphiql: true,
   rootValue: { request: request },

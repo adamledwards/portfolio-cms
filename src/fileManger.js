@@ -2,8 +2,7 @@ const path = require('path');
 const fs = require('fs-extra');
 const md5 = require('md5');
 
-function saveFile(context, filePath) {
-  const file = context.file;
+function saveFile(file, filePath) {
   const fileExt = path.extname(file.originalname);
   const filename = `${md5(`${file.originalname}-${Date.now()}`)}${fileExt}`;
   const newPath = path.resolve(filePath, filename);
@@ -21,6 +20,10 @@ function saveFile(context, filePath) {
     });
 }
 
+function deleteFile(filePath) {
+  return fs.unlink(filePath);
+}
 module.exports = {
-  saveFile
+  saveFile,
+  deleteFile
 };
